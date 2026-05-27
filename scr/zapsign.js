@@ -1,5 +1,6 @@
 const axios = require('axios');
 const { config } = require('./config');
+const { validateCPF } = require('./utils');
 
 const zapsignApi = axios.create({
   baseURL: config.zapsign.baseUrl,
@@ -18,7 +19,7 @@ async function criarDocumentoViaModelo(params) {
   const nome = (params.name || params.nome || '').trim();
   const email = params.email || '';
   const telefone = params.phone || params.telefone || '';
-  const cpf = params.cpf || '';
+  const documento = params.cpf || params.documento || params.passaporte || '';
   const ticketId = params.ticket_id || params.ticketId || '';
   // Prefer the Render/env template so production is not affected by an old
   // sandbox template_id still being sent by Zendesk.
@@ -47,7 +48,7 @@ async function criarDocumentoViaModelo(params) {
       : `Olá ${nome},\nSegue o documento referente ao chamado #${ticketId} para sua assinatura.\nAtenciosamente, Equipe de Suporte`,
     data: criarCamposModelo([
       { variaveis: ['NOME COMPLETO', 'NAME', 'CLIENTE'], valor: nome },
-      { variaveis: ['CPF', 'NUMERO DO CPF', 'NÚMERO DO CPF'], valor: cpf },
+      { variaveis: ['CPF', 'PASSAPORTE', 'DOCUMENTO', 'NUMERO DO CPF', 'NUMERO DO DOCUMENTO'], valor: documento },
       { variaveis: ['EMAIL', 'E-MAIL', 'EMAIL DO CLIENTE'], valor: email },
       { variaveis: ['NUMERO_TICKET', 'NUMERO DO TICKET', 'NÚMERO DO TICKET', 'TICKET'], valor: String(ticketId) },
       { variaveis: ['DATA'], valor: new Date().toLocaleDateString('pt-BR') },
@@ -81,7 +82,8 @@ async function criarDocumentoViaUpload(params) {
   const nome = (params.name || params.nome || '').trim();
   const email = params.email || '';
   const telefone = params.phone || params.telefone || '';
-  const cpf = params.cpf || '';
+  const documento = params.cpf || params.documento || params.passaporte || '';
+  const isCpf = validateCPF(documento);
   const ticketId = params.ticket_id || params.ticketId || '';
   const assunto = params.assunto || '';
 
@@ -106,8 +108,8 @@ async function criarDocumentoViaUpload(params) {
         send_automatic_whatsapp: hasPhone,
         lock_name: true,
         lock_email: true,
-        require_cpf: !!cpf,
-        cpf: cpf || '',
+        require_cpf: isCpf,
+        cpf: isCpf ? documento : '',
         custom_message: hasPhone
           ? `Olá ${nome}, segue o documento do chamado #${ticketId} para assinatura.`
           : `Olá ${nome},\nSegue o documento do chamado #${ticketId} para assinatura.`,

@@ -4,7 +4,7 @@ const rateLimit = require("express-rate-limit");
 const { config } = require("./config");
 const { createDocument, baixarArquivoAssinado } = require("./zapsign");
 const { updateTicket, uploadAttachment, buscarTagsDoTicketObrigatorio } = require("./zendesk");
-const { auditLog, maskCPF, validateEmail, validateCPF, sendErrorAlert } = require("./utils");
+const { auditLog, maskIdentityDocument, validateEmail, validateIdentityDocument, sendErrorAlert } = require("./utils");
 const {
   salvarJobZendesk,
   marcarCriacaoDocumentoIniciada,
@@ -241,7 +241,8 @@ async function recuperarJobsPendentes() {
 
 // ─── Rota principal: Zendesk → ZapSign ───────────────────────────────────────
 app.post("/webhook/zendesk", webhookLimiter, validateWebhookSecret, async (req, res) => {
-  const { ticket_id, name, email, cpf, phone, template_id, valor } = req.body;
+  const { ticket_id, name, email, cpf, documento, passaporte, phone, template_id, valor } = req.body;
+  const documentoIdentificacao = cpf || documento || passaporte;
 
   // 1. Proteção contra duplicatas
   if (processando.has(ticket_id)) {
@@ -254,7 +255,7 @@ app.post("/webhook/zendesk", webhookLimiter, validateWebhookSecret, async (req, 
   if (!ticket_id) errors.push("ticket_id é obrigatório");
   if (!name || name.trim().length < 2) errors.push("name inválido");
   if (!email || !validateEmail(email)) errors.push("email inválido");
-  if (!cpf || !validateCPF(cpf)) errors.push("CPF inválido");
+  if (!documentoIdentificacao || !validateIdentityDocument(documentoIdentificacao)) errors.push("CPF ou passaporte inválido");
   if (!template_id && !config.zapsign.templateId && !config.zapsign.pdfUrl) {
     errors.push("template_id e obrigatorio quando ZAPSIGN_TEMPLATE_ID ou ZAPSIGN_PDF_URL nao estiver configurado");
   }
@@ -264,15 +265,24 @@ app.post("/webhook/zendesk", webhookLimiter, validateWebhookSecret, async (req, 
     return res.status(400).json({ error: "Dados inválidos", details: errors });
   }
 
-  // 3. Log de auditoria (CPF mascarado)
+  // 3. Log de auditoria (documento mascarado)
   auditLog("INFO", "request_received", {
     ticket_id,
     email,
     name: name.trim(),
-    cpf: maskCPF(cpf),
+    documento: maskIdentityDocument(documentoIdentificacao),
   });
 
-  const dadosTicket = { template_id, name, email, cpf, phone, ticket_id, valor };
+  const dadosTicket = {
+    template_id,
+    name,
+    email,
+    cpf: documentoIdentificacao,
+    documento: documentoIdentificacao,
+    phone,
+    ticket_id,
+    valor,
+  };
   let job;
 
   try {

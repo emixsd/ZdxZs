@@ -22,16 +22,6 @@ function auditLog(level, event, data = {}) {
 }
 
 /**
- * Mascara CPF para logs: 123.456.789-09 → ***.***.789-09
- */
-function maskCPF(cpf) {
-  if (!cpf) return "***";
-  const clean = cpf.replace(/\D/g, "");
-  if (clean.length !== 11) return "***";
-  return `***.***.${clean.slice(6, 9)}-${clean.slice(9)}`;
-}
-
-/**
  * Valida formato básico de email.
  */
 function validateEmail(email) {
@@ -60,6 +50,47 @@ function validateCPF(cpf) {
   if (rev !== parseInt(clean[10])) return false;
 
   return true;
+}
+
+function normalizePassport(passport) {
+  return String(passport || "").trim().replace(/[\s.-]/g, "").toUpperCase();
+}
+
+function validatePassport(passport) {
+  const clean = normalizePassport(passport);
+  if (!/^[A-Z0-9]{5,20}$/.test(clean)) return false;
+  if (!/\d/.test(clean)) return false;
+  if (/^([A-Z0-9])\1+$/.test(clean)) return false;
+  return true;
+}
+
+function validateIdentityDocument(document) {
+  const value = String(document || "").trim();
+  if (!value) return false;
+
+  const onlyDigits = value.replace(/\D/g, "");
+  const looksLikeCpf = /^[\d.\-\s]+$/.test(value) && onlyDigits.length === 11;
+  if (looksLikeCpf) {
+    return validateCPF(value);
+  }
+
+  return validatePassport(value);
+}
+
+/**
+ * Mascara CPF/passaporte para logs.
+ */
+function maskIdentityDocument(document) {
+  if (!document) return "***";
+
+  const onlyDigits = String(document).replace(/\D/g, "");
+  if (onlyDigits.length === 11 && validateCPF(document)) {
+    return `***.***.${onlyDigits.slice(6, 9)}-${onlyDigits.slice(9)}`;
+  }
+
+  const clean = normalizePassport(document);
+  if (!clean) return "***";
+  return `***${clean.slice(-3)}`;
 }
 
 /**
@@ -98,4 +129,13 @@ async function sendErrorAlert({ title, ticket_id, email, error }) {
   }
 }
 
-module.exports = { auditLog, maskCPF, validateEmail, validateCPF, sendErrorAlert };
+module.exports = {
+  auditLog,
+  maskCPF: maskIdentityDocument,
+  maskIdentityDocument,
+  validateEmail,
+  validateCPF,
+  validatePassport,
+  validateIdentityDocument,
+  sendErrorAlert,
+};
