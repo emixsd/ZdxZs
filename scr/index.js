@@ -18,14 +18,7 @@ const {
 const app = express();
 app.set("trust proxy", 1); // Render usa proxy reverso
 
-// ─── Raw body para validação HMAC ────────────────────────────────────────────
-// Captura o body bruto antes do JSON.parse — necessário para validar
-// HMAC corretamente (JSON.stringify pode reordenar/alterar o corpo)
-app.use(express.json({
-  verify: (req, _res, buf) => {
-    req.rawBody = buf;
-  },
-}));
+app.use(express.json());
 
 // ─── Rate Limiting ────────────────────────────────────────────────────────────
 const limiter = rateLimit({
@@ -56,55 +49,39 @@ function encontrarTagBloqueio(tags) {
   return tagsQueBloqueiamNovoDocumento.find((tag) => tags.includes(tag)) || "";
 }
 
-// ─── Validação do Webhook Secret (Zendesk) ───────────────────────────────────
-function validateWebhookSecret(req, res, next) {
-  const incomingSecret = req.headers["x-webhook-secret"];
-  if (!incomingSecret) {
-    auditLog("WARN", "webhook_rejected", { ip: req.ip, reason: "Missing secret" });
-    return res.status(401).json({ error: "Não autorizado." });
-  }
-  try {
-    const a = Buffer.from(incomingSecret);
-    const b = Buffer.from(config.WEBHOOK_SECRET);
-    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
-      throw new Error("Secret mismatch");
+// ─── Validação de secret via header (timing-safe) ────────────────────────────
+// Zendesk e ZapSign enviam um header customizado com secret estático,
+// configurado no painel de cada plataforma.
+function criarValidadorDeSecret(secret, eventoRejeicao) {
+  return (req, res, next) => {
+    const incomingSecret = req.headers["x-webhook-secret"];
+    if (!incomingSecret) {
+      auditLog("WARN", eventoRejeicao, { ip: req.ip, reason: "Missing secret" });
+      return res.status(401).json({ error: "Não autorizado." });
     }
-  } catch {
-    auditLog("WARN", "webhook_rejected", { ip: req.ip, reason: "Invalid secret" });
-    return res.status(401).json({ error: "Não autorizado." });
-  }
-  next();
+    try {
+      const a = Buffer.from(incomingSecret);
+      const b = Buffer.from(secret);
+      if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+        throw new Error("Secret mismatch");
+      }
+    } catch {
+      auditLog("WARN", eventoRejeicao, { ip: req.ip, reason: "Invalid secret" });
+      return res.status(401).json({ error: "Não autorizado." });
+    }
+    next();
+  };
 }
 
-// ─── Autenticação do Webhook ZapSign (HMAC SHA-256) ──────────────────────────
-// Usa raw body para calcular o HMAC — mais seguro que JSON.stringify
-function validateZapSignSignature(req, res, next) {
-  if (!config.zapsign.webhookSecret) {
-    auditLog("INFO", "zapsign_hmac_skipped", { ip: req.ip });
-    return next();
-  }
+const validateWebhookSecret = criarValidadorDeSecret(
+  config.WEBHOOK_SECRET,
+  "webhook_rejected"
+);
 
-  const signature = req.headers["x-zapsign-hmac-sha256"];
-  if (!signature) {
-    auditLog("WARN", "zapsign_webhook_rejected", { ip: req.ip, reason: "Missing signature" });
-    return res.status(401).json({ error: "Não autorizado." });
-  }
-  try {
-    const expected = crypto
-      .createHmac("sha256", config.zapsign.webhookSecret)
-      .update(req.rawBody)
-      .digest("hex");
-    const incomingBuf = Buffer.from(signature);
-    const expectedBuf = Buffer.from(expected);
-    if (incomingBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(incomingBuf, expectedBuf)) {
-      throw new Error("Signature mismatch");
-    }
-  } catch {
-    auditLog("WARN", "zapsign_webhook_rejected", { ip: req.ip, reason: "Invalid signature" });
-    return res.status(401).json({ error: "Não autorizado." });
-  }
-  next();
-}
+const validateZapSignSecret = criarValidadorDeSecret(
+  config.zapsign.webhookSecret,
+  "zapsign_webhook_rejected"
+);
 
 function resumirDocumentoZapSign(doc) {
   const signer = doc.signers?.[0] || {};
@@ -303,7 +280,7 @@ app.post("/webhook/zendesk", webhookLimiter, validateWebhookSecret, async (req, 
 });
 
 // ─── Rota: Webhook ZapSign ───────────────────────────────────────────────────
-app.post("/webhook/zapsign", validateZapSignSignature, async (req, res) => {
+app.post("/webhook/zapsign", validateZapSignSecret, async (req, res) => {
   const eventType = req.body.event_type || req.body.event_action || "";
   const doc = req.body.document || req.body;
 

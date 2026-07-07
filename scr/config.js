@@ -2,6 +2,7 @@ require("dotenv").config();
 
 const REQUIRED = [
   "ZAPSIGN_API_TOKEN",
+  "ZAPSIGN_WEBHOOK_SECRET",
   "ZENDESK_SUBDOMAIN",
   "ZENDESK_EMAIL",
   "ZENDESK_API_TOKEN",
@@ -18,7 +19,7 @@ if (missing.length > 0) {
 const config = {
   zapsign: {
     apiToken: process.env.ZAPSIGN_API_TOKEN,
-    webhookSecret: process.env.ZAPSIGN_WEBHOOK_SECRET || "",
+    webhookSecret: process.env.ZAPSIGN_WEBHOOK_SECRET,
     baseUrl: process.env.ZAPSIGN_BASE_URL || "https://api.zapsign.com.br/api/v1",
     templateId: process.env.ZAPSIGN_TEMPLATE_ID || "",
     pdfUrl: process.env.ZAPSIGN_PDF_URL || "",
