@@ -102,10 +102,10 @@ async function marcarJobFalhou(ticketId, err) {
   return atualizarJobZendesk(ticketId, {
     status: "failed",
     attempts: (existing?.attempts || 0) + 1,
+    // Sem err.response.data: o corpo da resposta pode ecoar CPF/dados pessoais
     last_error: {
       message: err.message,
       status: err.response?.status || null,
-      response: err.response?.data || null,
       failed_at: new Date().toISOString(),
     },
   });

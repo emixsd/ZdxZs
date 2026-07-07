@@ -18,17 +18,20 @@ const {
 const app = express();
 app.set("trust proxy", 1); // Render usa proxy reverso
 
-app.use(express.json());
-
 // ─── Rate Limiting ────────────────────────────────────────────────────────────
+// Antes do parser JSON, para requisições bloqueadas não pagarem o custo do parse.
+// /health fica de fora para não derrubar o health check do Render.
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 50,
+  max: 300,
   message: { error: "Muitas requisições. Tente novamente em 15 minutos." },
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => req.path === "/health",
 });
 app.use(limiter);
+
+app.use(express.json());
 
 const webhookLimiter = rateLimit({
   windowMs: 1 * 60 * 1000,
@@ -167,12 +170,12 @@ async function processarZendeskJob(job) {
     await removerJobZendesk(ticket_id);
     auditLog("INFO", "ticket_updated", { ticket_id, status: "documento_enviado" });
   } catch (err) {
+    // Sem err.response.data nos logs: o corpo pode ecoar CPF/dados pessoais
     auditLog("ERROR", "processing_failed", {
       ticket_id,
       email,
       error: err.message,
       status: err.response?.status,
-      response: err.response?.data,
     });
 
     try {
@@ -229,7 +232,8 @@ app.post("/webhook/zendesk", webhookLimiter, validateWebhookSecret, async (req, 
 
   // 2. Validação de entrada
   const errors = [];
-  if (!ticket_id) errors.push("ticket_id é obrigatório");
+  // Apenas dígitos — o ticket_id é interpolado em URLs da API Zendesk
+  if (!/^\d+$/.test(String(ticket_id ?? ""))) errors.push("ticket_id inválido");
   if (!name || name.trim().length < 2) errors.push("name inválido");
   if (!email || !validateEmail(email)) errors.push("email inválido");
   if (!documentoIdentificacao || !validateIdentityDocument(documentoIdentificacao)) errors.push("CPF ou passaporte inválido");
@@ -291,10 +295,12 @@ app.post("/webhook/zapsign", validateZapSignSecret, async (req, res) => {
   });
 
   // Extrair ticket_id do external_id (formato: "zendesk-12345")
-  const externalId = doc.external_id || "";
+  const externalId = String(doc.external_id || "");
   const ticket_id = externalId.startsWith("zendesk-")
-    ? externalId.replace("zendesk-", "")
+    ? externalId.slice("zendesk-".length)
     : externalId;
+  // Apenas dígitos — o ticket_id é interpolado em URLs da API Zendesk
+  const ticketIdValido = /^\d+$/.test(ticket_id);
 
   // ── Documento assinado ──
   // Verifica doc.status === "signed" para garantir que TODOS os signatários
@@ -302,14 +308,16 @@ app.post("/webhook/zapsign", validateZapSignSecret, async (req, res) => {
   const isFullySigned = ["doc_signed", "sign_doc", "signed"].includes(eventType)
     && doc.status === "signed";
 
-  if (isFullySigned && ticket_id) {
+  if (isFullySigned && ticketIdValido) {
     const signer_email = doc.signers?.[0]?.email || "";
     auditLog("INFO", "document_signed", { ticket_id, signer_email });
     res.status(200).json({ status: "ok" });
 
     try {
       const uploads = [];
-      let signedFileUrl = doc.signed_file || "";
+      // Preenchida apenas com a URL vinda da API autenticada da ZapSign —
+      // nunca com a URL do payload do webhook (risco de SSRF/link malicioso)
+      let signedFileUrl = "";
       let pdfMessage = "\nPDF assinado ainda nao estava disponivel na ZapSign.";
 
       try {
@@ -334,7 +342,6 @@ app.post("/webhook/zapsign", validateZapSignSecret, async (req, res) => {
           ticket_id,
           error: pdfErr.message,
           status: pdfErr.response?.status,
-          response: pdfErr.response?.data,
         });
       }
 
@@ -350,7 +357,6 @@ app.post("/webhook/zapsign", validateZapSignSecret, async (req, res) => {
         ticket_id,
         error: err.message,
         status: err.response?.status,
-        response: err.response?.data,
       });
       await sendErrorAlert({
         title: "❌ Falha ao processar assinatura",
@@ -366,7 +372,7 @@ app.post("/webhook/zapsign", validateZapSignSecret, async (req, res) => {
   const isRefused = ["doc_refused", "refused"].includes(eventType)
     || doc.status === "refused";
 
-  if (isRefused && ticket_id) {
+  if (isRefused && ticketIdValido) {
     const signer_email = doc.signers?.[0]?.email || "";
     const motivo = doc.refusal_reason || req.body.refusal_reason || "";
     auditLog("INFO", "document_refused", { ticket_id, signer_email, motivo });
@@ -384,7 +390,6 @@ app.post("/webhook/zapsign", validateZapSignSecret, async (req, res) => {
         ticket_id,
         error: err.message,
         status: err.response?.status,
-        response: err.response?.data,
       });
     }
     return;

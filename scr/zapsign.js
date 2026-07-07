@@ -142,17 +142,19 @@ async function criarDocumento(dadosTicket) {
  * Consulta os detalhes de um documento na ZapSign.
  */
 async function detalharDocumento(docToken) {
-  const { data } = await zapsignApi.get(`/docs/${docToken}/`);
+  const { data } = await zapsignApi.get(`/docs/${encodeURIComponent(docToken)}/`);
   return data;
 }
 
 async function baixarArquivoAssinado(doc) {
-  let signedFileUrl = doc.signed_file;
-
-  if (!signedFileUrl && doc.token) {
-    const detalhes = await detalharDocumento(doc.token);
-    signedFileUrl = detalhes.signed_file;
+  // Ignora o signed_file do payload do webhook (URL controlável por quem
+  // envia a requisição — risco de SSRF). Busca sempre na API autenticada.
+  if (!doc.token) {
+    return null;
   }
+
+  const detalhes = await detalharDocumento(doc.token);
+  const signedFileUrl = detalhes.signed_file;
 
   if (!signedFileUrl) {
     return null;

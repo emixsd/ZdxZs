@@ -94,6 +94,15 @@ function maskIdentityDocument(document) {
 }
 
 /**
+ * Mascara email para alertas externos (Slack).
+ */
+function maskEmail(email) {
+  const [user, domain] = String(email || "").split("@");
+  if (!user || !domain) return "***";
+  return `${user.slice(0, 2)}***@${domain}`;
+}
+
+/**
  * Envia alerta de erro via Slack webhook (se configurado).
  */
 async function sendErrorAlert({ title, ticket_id, email, error }) {
@@ -107,7 +116,7 @@ async function sendErrorAlert({ title, ticket_id, email, error }) {
           color: "#FF0000",
           fields: [
             { title: "Ticket ID", value: String(ticket_id || "N/A"), short: true },
-            { title: "Email", value: email || "N/A", short: true },
+            { title: "Email", value: email ? maskEmail(email) : "N/A", short: true },
             { title: "Erro", value: error || "Erro desconhecido", short: false },
             { title: "Timestamp", value: new Date().toISOString(), short: true },
           ],
