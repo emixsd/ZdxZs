@@ -13,10 +13,12 @@ const {
   marcarJobRevisao,
   removerJobZendesk,
   carregarJobsRecuperaveis,
+  limparJobsFinalizadosAntigos,
 } = require("./jobStore");
 
 const app = express();
 app.set("trust proxy", 1); // Render usa proxy reverso
+app.disable("x-powered-by"); // não anunciar a tecnologia do servidor
 
 // ─── Rate Limiting ────────────────────────────────────────────────────────────
 // Antes do parser JSON, para requisições bloqueadas não pagarem o custo do parse.
@@ -207,6 +209,11 @@ async function processarZendeskJob(job) {
 
 async function recuperarJobsPendentes() {
   try {
+    const removidos = await limparJobsFinalizadosAntigos();
+    if (removidos > 0) {
+      auditLog("INFO", "old_jobs_cleaned", { count: removidos });
+    }
+
     const jobs = await carregarJobsRecuperaveis();
     if (jobs.length === 0) return;
 

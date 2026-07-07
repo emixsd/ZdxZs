@@ -1,8 +1,25 @@
 const fs = require("fs/promises");
 const path = require("path");
+const { maskIdentityDocument, maskEmail } = require("./utils");
 
 const jobsDir = process.env.JOB_STORAGE_DIR
   || path.join(process.cwd(), "data", "zendesk-jobs");
+
+// Jobs nesses status nunca são reprocessados automaticamente — os dados
+// completos ficam no ticket do Zendesk, então aqui podem ser mascarados.
+const STATUS_FINAIS = ["failed", "needs_review"];
+const RETENCAO_JOBS_FINALIZADOS_MS = 30 * 24 * 60 * 60 * 1000; // 30 dias
+
+function mascararPayloadFinalizado(payload) {
+  if (!payload) return payload;
+  const masked = { ...payload };
+  for (const campo of ["cpf", "documento", "passaporte"]) {
+    if (masked[campo]) masked[campo] = maskIdentityDocument(masked[campo]);
+  }
+  if (masked.email) masked.email = maskEmail(masked.email);
+  if (masked.phone) masked.phone = String(masked.phone).replace(/\d(?=\d{4})/g, "*");
+  return masked;
+}
 
 function normalizarTicketId(ticketId) {
   return String(ticketId || "").replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -68,6 +85,10 @@ async function atualizarJobZendesk(ticketId, patch) {
     ...patch,
     updated_at: new Date().toISOString(),
   };
+
+  if (STATUS_FINAIS.includes(job.status)) {
+    job.payload = mascararPayloadFinalizado(job.payload);
+  }
 
   await escreverJsonAtomico(caminhoJob(ticketId), job);
   return job;
@@ -141,6 +162,32 @@ async function carregarJobsRecuperaveis() {
   return jobs.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
 }
 
+async function limparJobsFinalizadosAntigos() {
+  await garantirDiretorio();
+  const files = await fs.readdir(jobsDir);
+  let removidos = 0;
+
+  for (const file of files) {
+    if (!file.endsWith(".json")) continue;
+
+    try {
+      const raw = await fs.readFile(path.join(jobsDir, file), "utf8");
+      const job = JSON.parse(raw);
+      if (!STATUS_FINAIS.includes(job.status)) continue;
+
+      const updatedAt = Date.parse(job.updated_at || job.created_at || "");
+      if (Number.isFinite(updatedAt) && Date.now() - updatedAt > RETENCAO_JOBS_FINALIZADOS_MS) {
+        await fs.unlink(path.join(jobsDir, file));
+        removidos++;
+      }
+    } catch {
+      // Ignora arquivo corrompido para nao travar o startup.
+    }
+  }
+
+  return removidos;
+}
+
 module.exports = {
   salvarJobZendesk,
   marcarCriacaoDocumentoIniciada,
@@ -149,4 +196,5 @@ module.exports = {
   marcarJobRevisao,
   removerJobZendesk,
   carregarJobsRecuperaveis,
+  limparJobsFinalizadosAntigos,
 };

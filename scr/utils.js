@@ -142,6 +142,7 @@ module.exports = {
   auditLog,
   maskCPF: maskIdentityDocument,
   maskIdentityDocument,
+  maskEmail,
   validateEmail,
   validateCPF,
   validatePassport,
