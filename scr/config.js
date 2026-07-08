@@ -29,7 +29,7 @@ const config = {
     baseUrl: process.env.ZAPSIGN_BASE_URL || "https://api.zapsign.com.br/api/v1",
     templateId: process.env.ZAPSIGN_TEMPLATE_ID || "",
     pdfUrl: process.env.ZAPSIGN_PDF_URL || "",
-    sendAutomaticWhatsapp: parseBooleanEnv("ZAPSIGN_SEND_AUTOMATIC_WHATSAPP", false),
+    sendAutomaticWhatsapp: parseBooleanEnv("ZAPSIGN_SEND_AUTOMATIC_WHATSAPP", true),
   },
   zendesk: {
     subdomain: process.env.ZENDESK_SUBDOMAIN,

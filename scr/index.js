@@ -98,6 +98,10 @@ function resumirDocumentoZapSign(doc) {
   };
 }
 
+function hasPhoneForDelivery(phone) {
+  return String(phone || "").replace(/\D/g, "").replace(/^55/, "").length >= 10;
+}
+
 async function processarZendeskJob(job) {
   const dadosTicket = job.payload || {};
   const { ticket_id, email } = dadosTicket;
@@ -231,6 +235,9 @@ async function recuperarJobsPendentes() {
 app.post("/webhook/zendesk", webhookLimiter, validateWebhookSecret, async (req, res) => {
   const { ticket_id, name, email, cpf, documento, passaporte, phone, template_id, valor } = req.body;
   const documentoIdentificacao = cpf || documento || passaporte;
+  const emailValido = !!email && validateEmail(email);
+  const phoneValido = hasPhoneForDelivery(phone);
+  const emailParaEnvio = emailValido ? email : "";
 
   // 1. Proteção contra duplicatas
   if (processando.has(ticket_id)) {
@@ -243,21 +250,21 @@ app.post("/webhook/zendesk", webhookLimiter, validateWebhookSecret, async (req, 
   // Apenas dígitos — o ticket_id é interpolado em URLs da API Zendesk
   if (!/^\d+$/.test(String(ticket_id ?? ""))) errors.push("ticket_id inválido");
   if (!name || name.trim().length < 2) errors.push("name inválido");
-  if (!email || !validateEmail(email)) errors.push("email inválido");
+  if (!emailValido && !phoneValido) errors.push("email ou phone valido obrigatorio");
   if (!documentoIdentificacao || !validateIdentityDocument(documentoIdentificacao)) errors.push("CPF ou passaporte inválido");
   if (!template_id && !config.zapsign.templateId && !config.zapsign.pdfUrl) {
     errors.push("template_id e obrigatorio quando ZAPSIGN_TEMPLATE_ID ou ZAPSIGN_PDF_URL nao estiver configurado");
   }
 
   if (errors.length > 0) {
-    auditLog("WARN", "validation_failed", { ticket_id, email, errors });
+    auditLog("WARN", "validation_failed", { ticket_id, email: emailParaEnvio, errors });
     return res.status(400).json({ error: "Dados inválidos", details: errors });
   }
 
   // 3. Log de auditoria (documento mascarado)
   auditLog("INFO", "request_received", {
     ticket_id,
-    email,
+    email: emailParaEnvio,
     name: name.trim(),
     documento: maskIdentityDocument(documentoIdentificacao),
   });
@@ -265,7 +272,7 @@ app.post("/webhook/zendesk", webhookLimiter, validateWebhookSecret, async (req, 
   const dadosTicket = {
     template_id,
     name,
-    email,
+    email: emailParaEnvio,
     cpf: documentoIdentificacao,
     documento: documentoIdentificacao,
     phone,

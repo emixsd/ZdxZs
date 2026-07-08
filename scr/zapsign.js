@@ -1,6 +1,6 @@
 const axios = require('axios');
 const { config } = require('./config');
-const { validateCPF } = require('./utils');
+const { auditLog, getExternalErrorInfo, validateCPF } = require('./utils');
 
 const zapsignApi = axios.create({
   baseURL: config.zapsign.baseUrl,
@@ -10,6 +10,91 @@ const zapsignApi = axios.create({
     'Content-Type': 'application/json',
   },
 });
+
+function getResponseText(err) {
+  const data = err.response?.data;
+  if (data == null) return '';
+  if (typeof data === 'string') return data.toLowerCase();
+  try {
+    return JSON.stringify(data).toLowerCase();
+  } catch {
+    return String(data).toLowerCase();
+  }
+}
+
+function isWhatsappDeliveryError(err) {
+  return !!err.response && /whatsapp|send_automatic_whatsapp|\bwa\b|wpp/.test(getResponseText(err));
+}
+
+function isEmailDeliveryError(err) {
+  return !!err.response && /e-?mail|send_automatic_email/.test(getResponseText(err));
+}
+
+function getFirstSigner(payload) {
+  return Array.isArray(payload.signers) ? payload.signers[0] || {} : payload;
+}
+
+function hasEmailChannel(payload) {
+  const signer = getFirstSigner(payload);
+  return Boolean(payload.send_automatic_email || signer.send_automatic_email);
+}
+
+function hasWhatsappChannel(payload) {
+  const signer = getFirstSigner(payload);
+  return Boolean(payload.send_automatic_whatsapp || signer.send_automatic_whatsapp);
+}
+
+function withoutWhatsapp(payload) {
+  const next = { ...payload, send_automatic_whatsapp: false };
+  if (Array.isArray(payload.signers)) {
+    next.signers = payload.signers.map((signer, index) => (
+      index === 0 ? { ...signer, send_automatic_whatsapp: false } : signer
+    ));
+  }
+  return next;
+}
+
+function withoutEmail(payload) {
+  const next = {
+    ...payload,
+    signer_email: '',
+    send_automatic_email: false,
+  };
+  if (Array.isArray(payload.signers)) {
+    next.signers = payload.signers.map((signer, index) => (
+      index === 0 ? { ...signer, email: '', send_automatic_email: false } : signer
+    ));
+  }
+  return next;
+}
+
+async function postZapSignWithDeliveryFallback(path, payload, ticketId) {
+  try {
+    return await zapsignApi.post(path, payload);
+  } catch (err) {
+    const externalError = getExternalErrorInfo(err);
+
+    if (hasWhatsappChannel(payload) && hasEmailChannel(payload) && isWhatsappDeliveryError(err)) {
+      auditLog('WARN', 'zapsign_whatsapp_fallback_to_email', {
+        ticket_id: ticketId,
+        status: externalError.status,
+        response_data: externalError.data,
+      });
+      return zapsignApi.post(path, withoutWhatsapp(payload));
+    }
+
+    if (hasEmailChannel(payload) && hasWhatsappChannel(payload) && isEmailDeliveryError(err)) {
+      auditLog('WARN', 'zapsign_email_fallback_to_whatsapp', {
+        ticket_id: ticketId,
+        status: externalError.status,
+        response_data: externalError.data,
+      });
+      return zapsignApi.post(path, withoutEmail(payload));
+    }
+
+    throw err;
+  }
+}
 
 /**
  * Cria um documento na ZapSign via modelo dinâmico DOCX.
@@ -60,7 +145,7 @@ async function criarDocumentoViaModelo(params) {
   };
 
   try {
-    const { data } = await zapsignApi.post('/models/create-doc/', payload);
+    const { data } = await postZapSignWithDeliveryFallback('/models/create-doc/', payload, ticketId);
     return data;
   } catch (err) {
     if (
@@ -119,7 +204,7 @@ async function criarDocumentoViaUpload(params) {
     ],
   };
 
-  const { data } = await zapsignApi.post('/docs/', payload);
+  const { data } = await postZapSignWithDeliveryFallback('/docs/', payload, ticketId);
   return data;
 }
 
