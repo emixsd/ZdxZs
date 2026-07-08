@@ -1,6 +1,6 @@
 const fs = require("fs/promises");
 const path = require("path");
-const { maskIdentityDocument, maskEmail } = require("./utils");
+const { maskIdentityDocument, maskEmail, getExternalErrorInfo } = require("./utils");
 
 const jobsDir = process.env.JOB_STORAGE_DIR
   || path.join(process.cwd(), "data", "zendesk-jobs");
@@ -120,13 +120,14 @@ async function marcarJobRevisao(ticketId, reason) {
 
 async function marcarJobFalhou(ticketId, err) {
   const existing = await lerJob(ticketId);
+  const externalError = getExternalErrorInfo(err);
   return atualizarJobZendesk(ticketId, {
     status: "failed",
     attempts: (existing?.attempts || 0) + 1,
-    // Sem err.response.data: o corpo da resposta pode ecoar CPF/dados pessoais
     last_error: {
       message: err.message,
-      status: err.response?.status || null,
+      status: externalError.status,
+      response_data: externalError.data,
       failed_at: new Date().toISOString(),
     },
   });

@@ -102,6 +102,50 @@ function maskEmail(email) {
   return `${user.slice(0, 2)}***@${domain}`;
 }
 
+function redactSensitiveText(value) {
+  return String(value || "")
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[email]")
+    .replace(/\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/g, "[cpf]")
+    .replace(/\b(?:\+?55)?\d{10,13}\b/g, "[phone]")
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]");
+}
+
+function sanitizeExternalErrorData(value, depth = 0) {
+  if (value == null) return value;
+  if (depth > 3) return "[truncated]";
+
+  if (typeof value === "string") {
+    return redactSensitiveText(value).slice(0, 1000);
+  }
+
+  if (typeof value === "number" || typeof value === "boolean") {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.slice(0, 20).map((item) => sanitizeExternalErrorData(item, depth + 1));
+  }
+
+  if (typeof value === "object") {
+    const sensitiveKey = /(authorization|token|secret|password|cpf|documento|passaporte|email|phone|telefone|celular|name|nome|signer|signers)/i;
+    return Object.fromEntries(
+      Object.entries(value).slice(0, 30).map(([key, item]) => [
+        key,
+        sensitiveKey.test(key) ? "[redacted]" : sanitizeExternalErrorData(item, depth + 1),
+      ])
+    );
+  }
+
+  return String(value);
+}
+
+function getExternalErrorInfo(err) {
+  return {
+    status: err.response?.status || null,
+    data: sanitizeExternalErrorData(err.response?.data),
+  };
+}
+
 /**
  * Envia alerta de erro via Slack webhook (se configurado).
  */
@@ -147,5 +191,7 @@ module.exports = {
   validateCPF,
   validatePassport,
   validateIdentityDocument,
+  getExternalErrorInfo,
+  sanitizeExternalErrorData,
   sendErrorAlert,
 };

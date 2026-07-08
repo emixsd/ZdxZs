@@ -4,7 +4,7 @@ const rateLimit = require("express-rate-limit");
 const { config } = require("./config");
 const { createDocument, baixarArquivoAssinado } = require("./zapsign");
 const { updateTicket, uploadAttachment, buscarTagsDoTicketObrigatorio } = require("./zendesk");
-const { auditLog, maskIdentityDocument, validateEmail, validateIdentityDocument, sendErrorAlert } = require("./utils");
+const { auditLog, maskIdentityDocument, validateEmail, validateIdentityDocument, sendErrorAlert, getExternalErrorInfo } = require("./utils");
 const {
   salvarJobZendesk,
   marcarCriacaoDocumentoIniciada,
@@ -172,12 +172,13 @@ async function processarZendeskJob(job) {
     await removerJobZendesk(ticket_id);
     auditLog("INFO", "ticket_updated", { ticket_id, status: "documento_enviado" });
   } catch (err) {
-    // Sem err.response.data nos logs: o corpo pode ecoar CPF/dados pessoais
+    const externalError = getExternalErrorInfo(err);
     auditLog("ERROR", "processing_failed", {
       ticket_id,
       email,
       error: err.message,
-      status: err.response?.status,
+      status: externalError.status,
+      response_data: externalError.data,
     });
 
     try {
