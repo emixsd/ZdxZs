@@ -31,6 +31,7 @@ async function criarDocumentoViaModelo(params) {
 
   const phoneClean = limparTelefone(telefone);
   const hasPhone = phoneClean.length >= 10;
+  const sendAutomaticWhatsapp = config.zapsign.sendAutomaticWhatsapp && hasPhone;
 
   const payload = {
     template_id: templateId,
@@ -39,11 +40,11 @@ async function criarDocumentoViaModelo(params) {
     signer_phone_country: '55',
     signer_phone_number: phoneClean,
     send_automatic_email: !!email,
-    send_automatic_whatsapp: hasPhone,
+    send_automatic_whatsapp: sendAutomaticWhatsapp,
     external_id: `zendesk-${ticketId}`,
     folder_path: '/zendesk/',
     lang: 'pt-br',
-    custom_message: hasPhone
+    custom_message: sendAutomaticWhatsapp
       ? `Olá ${nome}, segue o documento referente ao chamado #${ticketId} para sua assinatura. Atenciosamente, Equipe de Suporte`
       : `Olá ${nome},\nSegue o documento referente ao chamado #${ticketId} para sua assinatura.\nAtenciosamente, Equipe de Suporte`,
     data: criarCamposModelo([
@@ -89,6 +90,7 @@ async function criarDocumentoViaUpload(params) {
 
   const phoneClean = limparTelefone(telefone);
   const hasPhone = phoneClean.length >= 10;
+  const sendAutomaticWhatsapp = config.zapsign.sendAutomaticWhatsapp && hasPhone;
 
   const payload = {
     name: `Contrato - Ticket #${ticketId} - ${assunto || 'Documento'}`,
@@ -105,12 +107,12 @@ async function criarDocumentoViaUpload(params) {
         phone_number: phoneClean,
         auth_mode: 'assinaturaTela',
         send_automatic_email: !!email,
-        send_automatic_whatsapp: hasPhone,
+        send_automatic_whatsapp: sendAutomaticWhatsapp,
         lock_name: true,
         lock_email: true,
         require_cpf: isCpf,
         cpf: isCpf ? documento : '',
-        custom_message: hasPhone
+        custom_message: sendAutomaticWhatsapp
           ? `Olá ${nome}, segue o documento do chamado #${ticketId} para assinatura.`
           : `Olá ${nome},\nSegue o documento do chamado #${ticketId} para assinatura.`,
       },

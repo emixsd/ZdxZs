@@ -16,6 +16,12 @@ if (missing.length > 0) {
   process.exit(1);
 }
 
+function parseBooleanEnv(key, defaultValue = false) {
+  const value = process.env[key];
+  if (value == null || value === "") return defaultValue;
+  return ["1", "true", "yes", "sim", "on"].includes(String(value).trim().toLowerCase());
+}
+
 const config = {
   zapsign: {
     apiToken: process.env.ZAPSIGN_API_TOKEN,
@@ -23,6 +29,7 @@ const config = {
     baseUrl: process.env.ZAPSIGN_BASE_URL || "https://api.zapsign.com.br/api/v1",
     templateId: process.env.ZAPSIGN_TEMPLATE_ID || "",
     pdfUrl: process.env.ZAPSIGN_PDF_URL || "",
+    sendAutomaticWhatsapp: parseBooleanEnv("ZAPSIGN_SEND_AUTOMATIC_WHATSAPP", false),
   },
   zendesk: {
     subdomain: process.env.ZENDESK_SUBDOMAIN,
