@@ -350,28 +350,57 @@ app.post("/webhook/zapsign", validateZapSignSecret, async (req, res) => {
           }
         }
       } catch (pdfErr) {
+        const externalError = getExternalErrorInfo(pdfErr);
         pdfMessage = signedFileUrl
           ? `\nLink temporario do PDF assinado: ${signedFileUrl}`
           : "\nFalha ao anexar o PDF assinado automaticamente.";
         auditLog("ERROR", "signed_pdf_upload_failed", {
           ticket_id,
           error: pdfErr.message,
-          status: pdfErr.response?.status,
+          status: externalError.status,
+          response_data: externalError.data,
         });
       }
 
-      await updateTicket(ticket_id, {
-        comment: `✅ Documento assinado por ${signer_email}.${pdfMessage}`,
-        tagsAdicionar: ["documento_assinado"],
-        tagsRemover: ["documento_enviado"],
-        uploads,
-      });
+      const signedComment = `✅ Documento assinado por ${signer_email}.${pdfMessage}`;
+
+      try {
+        await updateTicket(ticket_id, {
+          comment: signedComment,
+          tagsAdicionar: ["documento_assinado"],
+          tagsRemover: ["documento_enviado"],
+          uploads,
+        });
+      } catch (ticketErr) {
+        if (uploads.length === 0) throw ticketErr;
+
+        const externalError = getExternalErrorInfo(ticketErr);
+        auditLog("ERROR", "signed_ticket_update_with_upload_failed", {
+          ticket_id,
+          error: ticketErr.message,
+          status: externalError.status,
+          response_data: externalError.data,
+        });
+
+        const fallbackPdfMessage = signedFileUrl
+          ? `\nNao consegui anexar o PDF automaticamente no Zendesk.\nLink temporario do PDF assinado: ${signedFileUrl}`
+          : "\nNao consegui anexar o PDF automaticamente no Zendesk.";
+
+        await updateTicket(ticket_id, {
+          comment: `✅ Documento assinado por ${signer_email}.${fallbackPdfMessage}`,
+          tagsAdicionar: ["documento_assinado"],
+          tagsRemover: ["documento_enviado"],
+        });
+      }
+
       auditLog("INFO", "ticket_updated_signed", { ticket_id, signer_email });
     } catch (err) {
+      const externalError = getExternalErrorInfo(err);
       auditLog("ERROR", "zapsign_webhook_failed", {
         ticket_id,
         error: err.message,
-        status: err.response?.status,
+        status: externalError.status,
+        response_data: externalError.data,
       });
       await sendErrorAlert({
         title: "❌ Falha ao processar assinatura",
