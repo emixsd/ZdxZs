@@ -22,6 +22,11 @@ function parseBooleanEnv(key, defaultValue = false) {
   return ["1", "true", "yes", "sim", "on"].includes(String(value).trim().toLowerCase());
 }
 
+function parsePositiveIntEnv(key, defaultValue) {
+  const value = Number.parseInt(process.env[key], 10);
+  return Number.isInteger(value) && value > 0 ? value : defaultValue;
+}
+
 const config = {
   zapsign: {
     apiToken: process.env.ZAPSIGN_API_TOKEN,
@@ -35,6 +40,10 @@ const config = {
     subdomain: process.env.ZENDESK_SUBDOMAIN,
     email: process.env.ZENDESK_EMAIL,
     apiToken: process.env.ZENDESK_API_TOKEN,
+  },
+  rateLimit: {
+    webhookPerMin: parsePositiveIntEnv("WEBHOOK_RATE_LIMIT_PER_MIN", 20),
+    globalPer15Min: parsePositiveIntEnv("GLOBAL_RATE_LIMIT_PER_15MIN", 300),
   },
   WEBHOOK_SECRET: process.env.WEBHOOK_SECRET,
   SLACK_WEBHOOK_URL: process.env.SLACK_WEBHOOK_URL || null,

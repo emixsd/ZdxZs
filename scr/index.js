@@ -25,7 +25,7 @@ app.disable("x-powered-by"); // não anunciar a tecnologia do servidor
 // /health fica de fora para não derrubar o health check do Render.
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 300,
+  max: config.rateLimit.globalPer15Min,
   message: { error: "Muitas requisições. Tente novamente em 15 minutos." },
   standardHeaders: true,
   legacyHeaders: false,
@@ -37,7 +37,7 @@ app.use(express.json());
 
 const webhookLimiter = rateLimit({
   windowMs: 1 * 60 * 1000,
-  max: 20,
+  max: config.rateLimit.webhookPerMin,
   message: { error: "Rate limit excedido no webhook." },
 });
 
