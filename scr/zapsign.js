@@ -280,7 +280,7 @@ function criarCamposModelo(campos) {
  */
 function limparTelefone(telefone) {
   if (!telefone) return '';
-  return telefone.replace(/\D/g, '').replace(/^55/, '');
+  return String(telefone).replace(/\D/g, '').replace(/^55/, '');
 }
 
 module.exports = {

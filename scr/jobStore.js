@@ -8,7 +8,15 @@ const jobsDir = process.env.JOB_STORAGE_DIR
 // Jobs nesses status nunca são reprocessados automaticamente — os dados
 // completos ficam no ticket do Zendesk, então aqui podem ser mascarados.
 const STATUS_FINAIS = ["failed", "needs_review"];
+// Status que o worker processa (creating só aparece aqui após um restart no meio da criação)
+const STATUS_RECUPERAVEIS = ["pending", "creating", "document_created"];
+// Um novo webhook não sobrescreve esses jobs. needs_review entra aqui porque o
+// documento pode já existir na ZapSign — reenviar criaria uma duplicata.
+const STATUS_QUE_BLOQUEIAM_NOVO_JOB = [...STATUS_RECUPERAVEIS, "needs_review"];
 const RETENCAO_JOBS_FINALIZADOS_MS = 30 * 24 * 60 * 60 * 1000; // 30 dias
+// Espera antes de cada retentativa automática (erros temporários)
+const BACKOFF_RETENTATIVAS_MS = [60 * 1000, 5 * 60 * 1000, 15 * 60 * 1000];
+const MAX_RETENTATIVAS = BACKOFF_RETENTATIVAS_MS.length;
 
 function mascararPayloadFinalizado(payload) {
   if (!payload) return payload;
@@ -19,6 +27,14 @@ function mascararPayloadFinalizado(payload) {
   if (masked.email) masked.email = maskEmail(masked.email);
   if (masked.phone) masked.phone = String(masked.phone).replace(/\d(?=\d{4})/g, "*");
   return masked;
+}
+
+function mascararJobFinalizado(job) {
+  job.payload = mascararPayloadFinalizado(job.payload);
+  if (job.zapsign_doc?.signer_email) {
+    job.zapsign_doc = { ...job.zapsign_doc, signer_email: maskEmail(job.zapsign_doc.signer_email) };
+  }
+  return job;
 }
 
 function normalizarTicketId(ticketId) {
@@ -58,7 +74,7 @@ async function salvarJobZendesk(payload) {
   const existing = await lerJob(ticketId);
   const now = new Date().toISOString();
 
-  if (existing && ["pending", "creating", "document_created"].includes(existing.status)) {
+  if (existing && STATUS_QUE_BLOQUEIAM_NOVO_JOB.includes(existing.status)) {
     return existing;
   }
 
@@ -67,6 +83,7 @@ async function salvarJobZendesk(payload) {
     ticket_id: String(ticketId),
     status: "pending",
     attempts: existing?.attempts || 0,
+    retries: 0,
     created_at: existing?.created_at || now,
     updated_at: now,
     payload,
@@ -87,7 +104,7 @@ async function atualizarJobZendesk(ticketId, patch) {
   };
 
   if (STATUS_FINAIS.includes(job.status)) {
-    job.payload = mascararPayloadFinalizado(job.payload);
+    mascararJobFinalizado(job);
   }
 
   await escreverJsonAtomico(caminhoJob(ticketId), job);
@@ -119,11 +136,32 @@ async function marcarJobRevisao(ticketId, reason) {
 }
 
 async function marcarJobFalhou(ticketId, err) {
-  const existing = await lerJob(ticketId);
   const externalError = getExternalErrorInfo(err);
   return atualizarJobZendesk(ticketId, {
     status: "failed",
-    attempts: (existing?.attempts || 0) + 1,
+    last_error: {
+      message: err.message,
+      status: externalError.status,
+      response_data: externalError.data,
+      failed_at: new Date().toISOString(),
+    },
+  });
+}
+
+/**
+ * Agenda nova tentativa automática após erro temporário.
+ * `patch` define o status em que o job volta (pending ou document_created).
+ */
+async function agendarRetentativa(ticketId, err, patch) {
+  const existing = await lerJob(ticketId);
+  const retries = (existing?.retries || 0) + 1;
+  const esperaMs = BACKOFF_RETENTATIVAS_MS[Math.min(retries, MAX_RETENTATIVAS) - 1];
+  const externalError = getExternalErrorInfo(err);
+
+  return atualizarJobZendesk(ticketId, {
+    ...patch,
+    retries,
+    next_attempt_at: new Date(Date.now() + esperaMs).toISOString(),
     last_error: {
       message: err.message,
       status: externalError.status,
@@ -141,7 +179,10 @@ async function removerJobZendesk(ticketId) {
   }
 }
 
-async function carregarJobsRecuperaveis() {
+/**
+ * Jobs prontos para processar: status recuperável e retentativa já vencida.
+ */
+async function carregarJobsRecuperaveis(agora = Date.now()) {
   await garantirDiretorio();
   const files = await fs.readdir(jobsDir);
   const jobs = [];
@@ -152,11 +193,12 @@ async function carregarJobsRecuperaveis() {
     try {
       const raw = await fs.readFile(path.join(jobsDir, file), "utf8");
       const job = JSON.parse(raw);
-      if (["pending", "creating", "document_created"].includes(job.status)) {
-        jobs.push(job);
-      }
+      if (!STATUS_RECUPERAVEIS.includes(job.status)) continue;
+      const proximaTentativa = Date.parse(job.next_attempt_at || "");
+      if (Number.isFinite(proximaTentativa) && proximaTentativa > agora) continue;
+      jobs.push(job);
     } catch {
-      // Ignora arquivo corrompido para nao travar o startup.
+      // Ignora arquivo corrompido para nao travar o worker.
     }
   }
 
@@ -190,7 +232,10 @@ async function limparJobsFinalizadosAntigos() {
 }
 
 module.exports = {
+  MAX_RETENTATIVAS,
+  lerJob,
   salvarJobZendesk,
+  agendarRetentativa,
   marcarCriacaoDocumentoIniciada,
   marcarDocumentoCriado,
   marcarJobFalhou,

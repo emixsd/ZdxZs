@@ -4,12 +4,10 @@ const { config } = require("./config");
  * Gera log estruturado com timestamp, nível e dados (sem CPF em texto puro).
  */
 function auditLog(level, event, data = {}) {
-  const entry = {
-    timestamp: new Date().toISOString(),
-    level,
-    event,
-    ...data,
-  };
+  const timestamp = new Date().toISOString();
+  const entry = { timestamp, level, event, ...data };
+  // Campos de dados nunca sobrescrevem os metadados do log
+  Object.assign(entry, { timestamp, level, event });
   const line = JSON.stringify(entry);
 
   if (level === "ERROR") {
@@ -146,6 +144,28 @@ function getExternalErrorInfo(err) {
   };
 }
 
+// Erros de conexão em que a requisição nem chegou ao servidor
+const CODIGOS_SEM_CONEXAO = ["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN"];
+
+/**
+ * Erro temporário de API externa (rede, 429, 5xx) — vale tentar de novo.
+ */
+function isTransientError(err) {
+  if (!err?.isAxiosError) return false;
+  if (!err.response) return true;
+  return err.response.status === 429 || err.response.status >= 500;
+}
+
+/**
+ * Indica se uma chamada de criação pode ter sido executada pelo servidor
+ * mesmo tendo falhado do nosso lado (timeout, conexão caída, 5xx).
+ */
+function requestMayHaveSucceeded(err) {
+  if (!err?.isAxiosError) return false;
+  if (!err.response) return !CODIGOS_SEM_CONEXAO.includes(err.code);
+  return err.response.status >= 500;
+}
+
 /**
  * Envia alerta de erro via Slack webhook (se configurado).
  */
@@ -184,7 +204,6 @@ async function sendErrorAlert({ title, ticket_id, email, error }) {
 
 module.exports = {
   auditLog,
-  maskCPF: maskIdentityDocument,
   maskIdentityDocument,
   maskEmail,
   validateEmail,
@@ -192,6 +211,8 @@ module.exports = {
   validatePassport,
   validateIdentityDocument,
   getExternalErrorInfo,
+  isTransientError,
+  requestMayHaveSucceeded,
   sanitizeExternalErrorData,
   sendErrorAlert,
 };
